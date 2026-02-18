@@ -105,23 +105,13 @@ button{
 
 <script>
 
-/* ================= CONFIG ================= */
-
+/* CONFIG */
 const DROPBOX_APP_KEY="djxi8x2gj3ss38l";
 const DROPBOX_FOLDER="/tickets";
 const REDIRECT_URI="https://evotechlab.github.io/ticketclient/";
 
 let accessToken=localStorage.getItem("db_access");
 let refreshToken=localStorage.getItem("db_refresh");
-
-/* ================= USER PERSISTENCE ================= */
-
-const usernameInput=document.getElementById("username");
-usernameInput.value=localStorage.getItem("ticket_username") || "";
-
-usernameInput.addEventListener("input",()=>{
-    localStorage.setItem("ticket_username",usernameInput.value.trim());
-});
 
 /* ================= PKCE ================= */
 
@@ -215,45 +205,15 @@ async function dropboxFetch(url,options={}){
     return response;
 }
 
-/* ================= FOLDER CREATION ================= */
-
-async function ensureUserFolder(user){
-
-    const rootPath=DROPBOX_FOLDER;
-    const userPath=`${DROPBOX_FOLDER}/${user}`;
-
-    // crea root se non esiste
-    await dropboxFetch(
-        "https://api.dropboxapi.com/2/files/create_folder_v2",
-        {
-            method:"POST",
-            headers:{"Content-Type":"application/json"},
-            body:JSON.stringify({path:rootPath,autorename:false})
-        }
-    ).catch(()=>{});
-
-    // crea cartella utente
-    await dropboxFetch(
-        "https://api.dropboxapi.com/2/files/create_folder_v2",
-        {
-            method:"POST",
-            headers:{"Content-Type":"application/json"},
-            body:JSON.stringify({path:userPath,autorename:false})
-        }
-    ).catch(()=>{});
-}
-
 /* ================= CREA TICKET ================= */
 
 async function creaTicket(){
 
-    const user=usernameInput.value.trim();
+    const user=document.getElementById("username").value.trim();
     if(!user){
-        alert("Inserisci nome utente");
+        alert("Inserisci nome utente in alto");
         return;
     }
-
-    await ensureUserFolder(user);
 
     const id=Date.now().toString();
 
@@ -273,9 +233,8 @@ async function creaTicket(){
             headers:{
                 "Content-Type":"application/octet-stream",
                 "Dropbox-API-Arg":JSON.stringify({
-                    path:`${DROPBOX_FOLDER}/${user}/ticket_${id}.json`,
-                    mode:"add",
-                    autorename:true
+                    path:`${DROPBOX_FOLDER}/ticket_${id}.json`,
+                    mode:"add"
                 })
             },
             body:JSON.stringify(ticket)
@@ -292,24 +251,17 @@ async function creaTicket(){
 
 async function loadTickets(){
 
-    const user=usernameInput.value.trim();
+    const user=document.getElementById("username").value.trim();
     if(!user) return;
-
-    const userPath=`${DROPBOX_FOLDER}/${user}`;
 
     const response=await dropboxFetch(
         "https://api.dropboxapi.com/2/files/list_folder",
         {
             method:"POST",
             headers:{"Content-Type":"application/json"},
-            body:JSON.stringify({path:userPath})
+            body:JSON.stringify({path:DROPBOX_FOLDER})
         }
     );
-
-    if(response.status!==200){
-        document.getElementById("ticketList").innerHTML="Nessun ticket";
-        return;
-    }
 
     const data=await response.json();
     let html="";
@@ -330,13 +282,15 @@ async function loadTickets(){
 
         const ticket=await res.json();
 
-        html+=`
-        <div style="margin-bottom:12px;">
-            <strong>${ticket.problema}</strong><br>
-            <span class="badge ${ticket.stato}">
-                ${ticket.stato.replace("_"," ").toUpperCase()}
-            </span>
-        </div>`;
+        if(ticket.user===user){
+            html+=`
+            <div style="margin-bottom:12px;">
+                <strong>${ticket.problema}</strong><br>
+                <span class="badge ${ticket.stato}">
+                    ${ticket.stato.replace("_"," ").toUpperCase()}
+                </span>
+            </div>`;
+        }
     }
 
     document.getElementById("ticketList").innerHTML=
@@ -348,7 +302,6 @@ async function loadTickets(){
 async function init(){
     await initDropboxAuth();
     setInterval(loadTickets,4000);
-    loadTickets();
 }
 
 init();
