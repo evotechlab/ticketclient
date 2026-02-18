@@ -3,311 +3,251 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>IT Ticket - Client</title>
-
-<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&display=swap" rel="stylesheet">
+<title>Ticket Client</title>
 
 <style>
 body{
+    font-family:Arial, sans-serif;
+    background:#111;
+    color:#fff;
     margin:0;
-    font-family:Inter,sans-serif;
-    background:#f1f5f9;
-    color:#0f172a;
-}
-
-header{
-    background:#0f172a;
-    color:white;
-    padding:16px;
-    display:flex;
-    justify-content:space-between;
-    align-items:center;
-}
-
-header input{
-    width:180px;
-    padding:6px;
-    border-radius:6px;
-    border:none;
+    padding:20px;
 }
 
 .container{
     max-width:800px;
     margin:auto;
-    padding:20px;
 }
 
-.card{
-    background:white;
-    border-radius:16px;
-    padding:20px;
-    box-shadow:0 6px 18px rgba(0,0,0,0.08);
-    margin-bottom:20px;
-}
-
-input, textarea{
+input, textarea, select, button{
     width:100%;
     padding:10px;
-    margin-bottom:12px;
+    margin-top:8px;
     border-radius:8px;
-    border:1px solid #cbd5e1;
-    font-family:Inter;
+    border:none;
+    font-size:14px;
 }
 
 button{
-    padding:10px 15px;
-    border:none;
-    border-radius:8px;
-    background:#0f172a;
+    background:#2ecc71;
     color:white;
     cursor:pointer;
 }
 
-.badge{
-    padding:6px 10px;
-    border-radius:20px;
-    font-size:12px;
-    font-weight:600;
+button:hover{
+    opacity:0.9;
 }
 
-.badge.aperto{ background:#fee2e2;color:#991b1b; }
-.badge.in_lavorazione{ background:#fef9c3;color:#92400e; }
-.badge.chiuso{ background:#dcfce7;color:#166534; }
+.ticket-card{
+    background:#1e1e1e;
+    padding:15px;
+    margin-top:15px;
+    border-radius:12px;
+    transition:0.2s;
+}
 
+.ticket-card:hover{
+    transform:translateY(-3px);
+    box-shadow:0 8px 20px rgba(0,0,0,0.4);
+}
+
+.badge{
+    padding:4px 10px;
+    border-radius:20px;
+    font-size:12px;
+    color:white;
+}
+
+.header{
+    display:flex;
+    justify-content:space-between;
+    align-items:center;
+}
 </style>
 </head>
 
 <body>
-
-<header>
-    <div>IT Support - Client</div>
-    <div>
-        Utente:
-        <input id="username" placeholder="Inserisci nome">
-    </div>
-</header>
-
 <div class="container">
 
-<div class="card">
-<h3>Apri Nuovo Ticket</h3>
-<input id="problema" placeholder="Titolo problema">
-<textarea id="descrizione" placeholder="Descrizione"></textarea>
-<button onclick="creaTicket()">Invia Ticket</button>
+<h2>Support Ticket</h2>
+
+<div id="loginBox">
+    <input id="username" placeholder="Inserisci nome utente">
+    <button onclick="login()">Login</button>
 </div>
 
-<div class="card">
-<h3>I Miei Ticket</h3>
-<div id="ticketList">Nessun ticket</div>
+<div id="app" style="display:none;">
+    <div class="header">
+        <div>Utente: <strong id="currentUser"></strong></div>
+        <button onclick="logout()" style="background:#e74c3c;width:auto;padding:6px 12px;">Logout</button>
+    </div>
+
+    <h3>Apri Nuovo Ticket</h3>
+    <input id="title" placeholder="Titolo">
+    <textarea id="description" placeholder="Descrizione"></textarea>
+    <select id="priority">
+        <option value="bassa">Bassa</option>
+        <option value="media">Media</option>
+        <option value="alta">Alta</option>
+    </select>
+    <button onclick="createTicket()">Invia Ticket</button>
+
+    <h3>I Miei Ticket</h3>
+    <div id="ticketList"></div>
 </div>
 
 </div>
 
+<script src="https://unpkg.com/dropbox/dist/Dropbox-sdk.min.js"></script>
 <script>
 
 /* CONFIG */
-const DROPBOX_APP_KEY="djxi8x2gj3ss38l";
-const DROPBOX_FOLDER="/tickets";
-const REDIRECT_URI="https://evotechlab.github.io/ticketclient/";
+const DROPBOX_APP_KEY = "djxi8x2gj3ss38l";
+const DROPBOX_FOLDER = "/tickets";
 
-let accessToken=localStorage.getItem("db_access");
-let refreshToken=localStorage.getItem("db_refresh");
+/* GLOBAL */
+let dbx;
+let currentUser;
 
-/* ================= PKCE ================= */
+/* LOGIN */
+function login(){
+    const username = document.getElementById("username").value.trim();
+    if(!username) return alert("Inserisci username");
 
-function generateRandomString(length){
-    const chars="ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
-    let result="";
-    for(let i=0;i<length;i++) result+=chars.charAt(Math.floor(Math.random()*chars.length));
-    return result;
-}
-
-async function sha256base64url(str){
-    const encoder=new TextEncoder();
-    const data=encoder.encode(str);
-    const hash=await crypto.subtle.digest("SHA-256",data);
-    return btoa(String.fromCharCode(...new Uint8Array(hash)))
-        .replace(/\+/g,"-").replace(/\//g,"_").replace(/=+$/,"");
-}
-
-async function initDropboxAuth(){
-
-    const params=new URLSearchParams(window.location.search);
-    const code=params.get("code");
-
-    if(code && !accessToken){
-
-        const codeVerifier=localStorage.getItem("pkce_code_verifier");
-
-        const response=await fetch("https://api.dropboxapi.com/oauth2/token",{
-            method:"POST",
-            headers:{"Content-Type":"application/x-www-form-urlencoded"},
-            body:new URLSearchParams({
-                code,
-                grant_type:"authorization_code",
-                client_id:DROPBOX_APP_KEY,
-                redirect_uri:REDIRECT_URI,
-                code_verifier:codeVerifier
-            })
-        });
-
-        const data=await response.json();
-
-        accessToken=data.access_token;
-        refreshToken=data.refresh_token;
-
-        localStorage.setItem("db_access",accessToken);
-        localStorage.setItem("db_refresh",refreshToken);
-
-        window.history.replaceState({},document.title,REDIRECT_URI);
-    }
-
-    if(!accessToken && !refreshToken){
-
-        const codeVerifier=generateRandomString(64);
-        const codeChallenge=await sha256base64url(codeVerifier);
-        localStorage.setItem("pkce_code_verifier",codeVerifier);
-
-        const authUrl=
-            `https://www.dropbox.com/oauth2/authorize?client_id=${DROPBOX_APP_KEY}&response_type=code&token_access_type=offline&redirect_uri=${encodeURIComponent(REDIRECT_URI)}&code_challenge=${codeChallenge}&code_challenge_method=S256`;
-
-        window.location.href=authUrl;
-    }
-}
-
-async function refreshAccessToken(){
-    const response=await fetch("https://api.dropboxapi.com/oauth2/token",{
-        method:"POST",
-        headers:{"Content-Type":"application/x-www-form-urlencoded"},
-        body:new URLSearchParams({
-            grant_type:"refresh_token",
-            refresh_token:refreshToken,
-            client_id:DROPBOX_APP_KEY
-        })
-    });
-    const data=await response.json();
-    accessToken=data.access_token;
-    localStorage.setItem("db_access",accessToken);
-}
-
-async function dropboxFetch(url,options={}){
-    options.headers=options.headers||{};
-    options.headers["Authorization"]="Bearer "+accessToken;
-
-    let response=await fetch(url,options);
-
-    if(response.status===401 && refreshToken){
-        await refreshAccessToken();
-        options.headers["Authorization"]="Bearer "+accessToken;
-        response=await fetch(url,options);
-    }
-
-    return response;
-}
-
-/* ================= CREA TICKET ================= */
-
-async function creaTicket(){
-
-    const user=document.getElementById("username").value.trim();
-    if(!user){
-        alert("Inserisci nome utente in alto");
-        return;
-    }
-
-    const id=Date.now().toString();
-
-    const ticket={
-        id,
-        timestamp:new Date().toISOString(),
-        user:user,
-        problema:document.getElementById("problema").value,
-        descrizione:document.getElementById("descrizione").value,
-        stato:"aperto"
+    currentUser = {
+        username,
+        userId: crypto.randomUUID()
     };
 
-    await dropboxFetch(
-        "https://content.dropboxapi.com/2/files/upload",
-        {
-            method:"POST",
-            headers:{
-                "Content-Type":"application/octet-stream",
-                "Dropbox-API-Arg":JSON.stringify({
-                    path:`${DROPBOX_FOLDER}/ticket_${id}.json`,
-                    mode:"add"
-                })
-            },
-            body:JSON.stringify(ticket)
-        }
-    );
+    localStorage.setItem("ticketUser", JSON.stringify(currentUser));
+    initApp();
+}
 
-    document.getElementById("problema").value="";
-    document.getElementById("descrizione").value="";
+function logout(){
+    localStorage.removeItem("ticketUser");
+    location.reload();
+}
+
+function getSavedUser(){
+    return JSON.parse(localStorage.getItem("ticketUser"));
+}
+
+/* INIT */
+async function initApp(){
+    currentUser = getSavedUser();
+    if(!currentUser) return;
+
+    document.getElementById("loginBox").style.display="none";
+    document.getElementById("app").style.display="block";
+    document.getElementById("currentUser").innerText=currentUser.username;
+
+    dbx = new Dropbox.Dropbox({ accessToken: localStorage.getItem("dropbox_token") });
+
+    await ensureUserFolder();
+    loadTickets();
+}
+
+/* ENSURE USER FOLDER */
+async function ensureUserFolder(){
+    const path = `${DROPBOX_FOLDER}/${currentUser.userId}`;
+
+    try{
+        await dbx.filesGetMetadata({path});
+    }catch(e){
+        await dbx.filesCreateFolderV2({path});
+    }
+}
+
+/* CREATE TICKET */
+async function createTicket(){
+    const title = document.getElementById("title").value;
+    const description = document.getElementById("description").value;
+    const priority = document.getElementById("priority").value;
+
+    if(!title || !description) return alert("Compila tutti i campi");
+
+    const ticket = {
+        id: Date.now(),
+        title,
+        description,
+        priority,
+        status:"open",
+        createdAt:new Date().toISOString(),
+        userId: currentUser.userId,
+        username: currentUser.username
+    };
+
+    const path = `${DROPBOX_FOLDER}/${currentUser.userId}/ticket_${ticket.id}.json`;
+
+    await dbx.filesUpload({
+        path,
+        contents: JSON.stringify(ticket),
+        mode:"add"
+    });
+
+    document.getElementById("title").value="";
+    document.getElementById("description").value="";
 
     loadTickets();
 }
 
-/* ================= CARICA TICKET ================= */
-
+/* LOAD TICKETS */
 async function loadTickets(){
+    const list = document.getElementById("ticketList");
+    list.innerHTML="Caricamento...";
 
-    const user=document.getElementById("username").value.trim();
-    if(!user) return;
+    const path = `${DROPBOX_FOLDER}/${currentUser.userId}`;
 
-    const response=await dropboxFetch(
-        "https://api.dropboxapi.com/2/files/list_folder",
-        {
-            method:"POST",
-            headers:{"Content-Type":"application/json"},
-            body:JSON.stringify({path:DROPBOX_FOLDER})
-        }
-    );
+    const res = await dbx.filesListFolder({path});
+    const entries = res.result.entries;
 
-    const data=await response.json();
-    let html="";
+    list.innerHTML="";
 
-    for(const file of data.entries){
-
-        if(file[".tag"]!=="file") continue;
-
-        const res=await dropboxFetch(
-            "https://content.dropboxapi.com/2/files/download",
-            {
-                method:"POST",
-                headers:{
-                    "Dropbox-API-Arg":JSON.stringify({path:file.path_lower})
-                }
-            }
-        );
-
-        const ticket=await res.json();
-
-        if(ticket.user===user){
-            html+=`
-            <div style="margin-bottom:12px;">
-                <strong>${ticket.problema}</strong><br>
-                <span class="badge ${ticket.stato}">
-                    ${ticket.stato.replace("_"," ").toUpperCase()}
-                </span>
-            </div>`;
-        }
+    for(const file of entries){
+        const fileData = await dbx.filesDownload({path:file.path_lower});
+        const text = await fileData.result.fileBlob.text();
+        const ticket = JSON.parse(text);
+        renderTicket(ticket);
     }
 
-    document.getElementById("ticketList").innerHTML=
-        html || "Nessun ticket trovato";
+    if(entries.length===0){
+        list.innerHTML="Nessun ticket";
+    }
 }
 
-/* ================= INIT ================= */
+/* RENDER */
+function renderTicket(ticket){
+    const STATUS = {
+        open:{label:"Aperto",color:"#e74c3c"},
+        working:{label:"In lavorazione",color:"#f39c12"},
+        closed:{label:"Chiuso",color:"#2ecc71"}
+    };
 
-async function init(){
-    await initDropboxAuth();
-    setInterval(loadTickets,4000);
+    const status = STATUS[ticket.status];
+
+    const card = document.createElement("div");
+    card.className="ticket-card";
+    card.innerHTML=`
+        <strong>${ticket.title}</strong>
+        <span class="badge" style="background:${status.color};float:right">
+            ${status.label}
+        </span>
+        <p>${ticket.description}</p>
+        <small>${new Date(ticket.createdAt).toLocaleString()}</small>
+    `;
+
+    document.getElementById("ticketList").appendChild(card);
 }
 
-init();
+/* AUTO INIT */
+window.onload=()=>{
+    if(getSavedUser()){
+        initApp();
+    }
+};
 
 </script>
-
 </body>
 </html>
+
 
