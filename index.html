@@ -14,7 +14,6 @@ body{
     background:#f1f5f9;
     color:#0f172a;
 }
-
 header{
     background:#0f172a;
     color:white;
@@ -23,20 +22,17 @@ header{
     justify-content:space-between;
     align-items:center;
 }
-
 header input{
     width:180px;
     padding:6px;
     border-radius:6px;
     border:none;
 }
-
 .container{
     max-width:800px;
     margin:auto;
     padding:20px;
 }
-
 .card{
     background:white;
     border-radius:16px;
@@ -44,16 +40,13 @@ header input{
     box-shadow:0 6px 18px rgba(0,0,0,0.08);
     margin-bottom:20px;
 }
-
 input, textarea{
     width:100%;
     padding:10px;
     margin-bottom:12px;
     border-radius:8px;
     border:1px solid #cbd5e1;
-    font-family:Inter;
 }
-
 button{
     padding:10px 15px;
     border:none;
@@ -62,29 +55,26 @@ button{
     color:white;
     cursor:pointer;
 }
-
 .badge{
     padding:6px 10px;
     border-radius:20px;
     font-size:12px;
     font-weight:600;
 }
-
 .badge.aperto{ background:#fee2e2;color:#991b1b; }
 .badge.in_lavorazione{ background:#fef9c3;color:#92400e; }
 .badge.chiuso{ background:#dcfce7;color:#166534; }
-
 </style>
 </head>
 
 <body>
 
 <header>
-    <div>IT Support - Client</div>
-    <div>
-        Utente:
-        <input id="username" placeholder="Inserisci nome">
-    </div>
+<div>IT Support - Client</div>
+<div>
+Utente:
+<input id="username" placeholder="Inserisci nome">
+</div>
 </header>
 
 <div class="container">
@@ -105,7 +95,8 @@ button{
 
 <script>
 
-/* CONFIG */
+/* ================= CONFIG ================= */
+
 const DROPBOX_APP_KEY="djxi8x2gj3ss38l";
 const DROPBOX_FOLDER="/tickets";
 const REDIRECT_URI="https://evotechlab.github.io/ticketclient/";
@@ -113,7 +104,14 @@ const REDIRECT_URI="https://evotechlab.github.io/ticketclient/";
 let accessToken=localStorage.getItem("db_access");
 let refreshToken=localStorage.getItem("db_refresh");
 
-/* ================= PKCE ================= */
+const usernameInput=document.getElementById("username");
+usernameInput.value=localStorage.getItem("ticket_username")||"";
+
+usernameInput.addEventListener("input",()=>{
+    localStorage.setItem("ticket_username",usernameInput.value.trim());
+});
+
+/* ================= AUTH ================= */
 
 function generateRandomString(length){
     const chars="ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
@@ -169,7 +167,7 @@ async function initDropboxAuth(){
         localStorage.setItem("pkce_code_verifier",codeVerifier);
 
         const authUrl=
-            `https://www.dropbox.com/oauth2/authorize?client_id=${DROPBOX_APP_KEY}&response_type=code&token_access_type=offline&redirect_uri=${encodeURIComponent(REDIRECT_URI)}&code_challenge=${codeChallenge}&code_challenge_method=S256`;
+        `https://www.dropbox.com/oauth2/authorize?client_id=${DROPBOX_APP_KEY}&response_type=code&token_access_type=offline&redirect_uri=${encodeURIComponent(REDIRECT_URI)}&code_challenge=${codeChallenge}&code_challenge_method=S256`;
 
         window.location.href=authUrl;
     }
@@ -205,13 +203,56 @@ async function dropboxFetch(url,options={}){
     return response;
 }
 
+/* ================= USER FILE ================= */
+
+function getUserFilePath(user){
+    return `${DROPBOX_FOLDER}/user_${user.toLowerCase().replace(/\s+/g,"_")}.json`;
+}
+
+async function getUserHistory(user){
+
+    const res=await dropboxFetch(
+        "https://content.dropboxapi.com/2/files/download",
+        {
+            method:"POST",
+            headers:{
+                "Dropbox-API-Arg":JSON.stringify({path:getUserFilePath(user)})
+            }
+        }
+    );
+
+    if(res.status!==200){
+        return {user,tickets:[]};
+    }
+
+    return await res.json();
+}
+
+async function saveUserHistory(user,data){
+
+    await dropboxFetch(
+        "https://content.dropboxapi.com/2/files/upload",
+        {
+            method:"POST",
+            headers:{
+                "Content-Type":"application/octet-stream",
+                "Dropbox-API-Arg":JSON.stringify({
+                    path:getUserFilePath(user),
+                    mode:"overwrite"
+                })
+            },
+            body:JSON.stringify(data)
+        }
+    );
+}
+
 /* ================= CREA TICKET ================= */
 
 async function creaTicket(){
 
-    const user=document.getElementById("username").value.trim();
+    const user=usernameInput.value.trim();
     if(!user){
-        alert("Inserisci nome utente in alto");
+        alert("Inserisci nome utente");
         return;
     }
 
@@ -226,6 +267,7 @@ async function creaTicket(){
         stato:"aperto"
     };
 
+    // salva ticket singolo per admin
     await dropboxFetch(
         "https://content.dropboxapi.com/2/files/upload",
         {
@@ -241,56 +283,40 @@ async function creaTicket(){
         }
     );
 
+    // aggiorna storico utente
+    const history=await getUserHistory(user);
+    history.tickets.push(ticket);
+
+    await saveUserHistory(user,history);
+
     document.getElementById("problema").value="";
     document.getElementById("descrizione").value="";
 
     loadTickets();
 }
 
-/* ================= CARICA TICKET ================= */
+/* ================= LOAD ================= */
 
 async function loadTickets(){
 
-    const user=document.getElementById("username").value.trim();
+    const user=usernameInput.value.trim();
     if(!user) return;
 
-    const response=await dropboxFetch(
-        "https://api.dropboxapi.com/2/files/list_folder",
-        {
-            method:"POST",
-            headers:{"Content-Type":"application/json"},
-            body:JSON.stringify({path:DROPBOX_FOLDER})
-        }
-    );
+    const history=await getUserHistory(user);
 
-    const data=await response.json();
+    history.tickets.sort((a,b)=>b.id-a.id);
+
     let html="";
 
-    for(const file of data.entries){
+    for(const ticket of history.tickets){
 
-        if(file[".tag"]!=="file") continue;
-
-        const res=await dropboxFetch(
-            "https://content.dropboxapi.com/2/files/download",
-            {
-                method:"POST",
-                headers:{
-                    "Dropbox-API-Arg":JSON.stringify({path:file.path_lower})
-                }
-            }
-        );
-
-        const ticket=await res.json();
-
-        if(ticket.user===user){
-            html+=`
-            <div style="margin-bottom:12px;">
-                <strong>${ticket.problema}</strong><br>
-                <span class="badge ${ticket.stato}">
-                    ${ticket.stato.replace("_"," ").toUpperCase()}
-                </span>
-            </div>`;
-        }
+        html+=`
+        <div style="margin-bottom:12px;">
+            <strong>${ticket.problema}</strong><br>
+            <span class="badge ${ticket.stato}">
+                ${ticket.stato.replace("_"," ").toUpperCase()}
+            </span>
+        </div>`;
     }
 
     document.getElementById("ticketList").innerHTML=
@@ -302,6 +328,7 @@ async function loadTickets(){
 async function init(){
     await initDropboxAuth();
     setInterval(loadTickets,4000);
+    loadTickets();
 }
 
 init();
@@ -310,6 +337,7 @@ init();
 
 </body>
 </html>
+
 
 
 
